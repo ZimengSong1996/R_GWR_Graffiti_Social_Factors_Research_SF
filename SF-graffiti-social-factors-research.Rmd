@@ -1,0 +1,449 @@
+---
+title: "Explore the potential socioeconomic factors of graffiti occurrences"
+author: Zimeng Song
+---
+
+
+## initial project scope
+The local business owners in San Francisco want to conduct an analysis of possible contributing factors to graffiti occurrence.
+
+# Aim and objectives:
+To explore the potential socioeconomic factors of graffiti occurrences.
+
+# Research Question:
+Do the socioeconomic factors influence the occurences of graffiti in San Francisico?
+
+# Data
+1. Resources:
+In this practical, we will use SF 2020 tracts shapefile data, census tract data of California, and the graffiti points data.
+SF 2020 tracts shapefile data can be found here:
+https://data.sfgov.org/Geographic-Locations-and-Boundaries/Census-2020-Tracts-for-San-Francisco/tmph-tgz9/about_data
+census tract data of California can be found here:
+https://data.census.gov/table?g=040XX00US06$1400000
+The graffiti points data can be found here:
+https://data.sfgov.org/City-Infrastructure/Graffiti/vg6y-3pcr
+
+2. The Dataset
+In the SF 2020 tracts shapefile data, we can get the multipolygon boundary of each tract in San Francisico whit CRS of WGS84. 
+In the census tract data of California, we can get the data of proportion of 15-24 aged
+population in each tract, 18-24 aged people's eaducation situation and household income. We use recent 5 years census data (2017-2021), which will be more occuracy compared to 1 year.
+In the graffiti points data, we can get all the location of graffiti occurrences from 2008 to 2023. Particularly, we extract graffitis happens during 2017-2021, that fit the timeline with census data.
+
+3. Preprocessing and Wrangling data:
+For the graffiti points, we select the time that graffiti points closed from 2017-2021, 5 years totally. Then we split the point location column into latitude and longitude columns, remove 0 value points.
+For the census tract data of California, we calculate the proportion of each indicator at tracts level, include the proportion of 15-24 aged population, the proportion of 18-24 aged population whose education level is high school or less, the proportion of household whose income are less than 25000 a year.
+
+# Analysis
+1. Hypothesis: 
+The graffiti occurrences will be influenced by the socioeconomic factors of population, education and income.
+
+2. Null Hypothesis:
+The population, education and income factors can not influence the possiblility of graffiti occurrences.
+
+3. Methods:
+Moran's I: explore if the graffiti occurrences and 3 socoieconomic factors distribution show cluser or dispersed pattern.
+Local indicators of spatial association (LISA): explore the pattern of graffiti points distribution and socoieconomic factors distribution.
+GRW: Built a model that how the socoieconomic factors influence the occurrences of graffiti, so the graffiti occurrences can be predictd.
+
+# Potential Limitations
+Perhaps the above methods are suitable for this dataset in some ways, but there are still some drawbacks:
+1. Due to the presence of bias, specifically the margin of error (MOE), in the statistical data, this study did not take into account the impact of MOE, which may affect the accuracy of the data.
+2. Census data may not fully reflect the current socio-economic conditions, especially in rapidly changing areas.
+3. Constrained by computational capacity and the scope of the research, this study has only selected three socio-economic factors that may influence the occurrence of graffiti. Incorporating additional influencing factors into the GWR model could enhance the accuracy of the model's predictions.
+
+# Backgroud and socioeconomic factors choice
+  As a diverse urban area, San Francisco has long been confronted with the challenge of urban graffiti. While graffiti is sometimes regarded as street art, it is more often considered a criminal act, especially when it involves the defacement of private or public property (Department of Public Works, San Francisco, 2019). In San Francisco, the annual cost of graffiti removal amounts to millions of dollars, imposing a significant socioeconomic burden (City and County of San Francisco, 2021).
+
+  The rationale behind selecting the population proportion of individuals aged 15 to 24 as an independent variable lies in the fact that this age group is commonly viewed as one of the most likely to engage in graffiti. Studies suggest that graffiti is more prevalent among adolescents and young adults, potentially related to their need for social identity and self-expression (MacDonald, 2001; Snyder, 2009). Furthermore, young people's behavior may be influenced by their peers, leading to the formation of graffiti 'hotspots' within certain communities (Weisel, 2002).
+
+  The choice of the proportion of low-income families can be justified by the theory of relative deprivation, which posits that criminal acts (including graffiti) may be a direct response to socioeconomic hardships (Leventhal & Brooks-Gunn, 2000). In economically disadvantaged communities, graffiti can be a form of protest against a lack of social capital and resources (Cohen, 1955). For a family of four, an income of $25,000 is near or below the poverty line (Department of Health and Human Services, 2021); therefore, we select households earning less than $25,000 as the low-income group.
+
+  As for the proportion of the population aged 18 to 24 with education levels of high school or below, the link between education levels and criminal behavior has been well-documented in research (Lochner, 2004; Machin, Marie & Vujić, 2011). Young adults with lower education levels may lack opportunities to express dissatisfaction and creative thinking through formal channels, thus potentially turning to graffiti as an alternative means (Sampson & Laub, 1993). Lochner and Moretti (2004) have noted a strong correlation between increased high school graduation rates and reduced crime rates. Therefore, we select the proportion of individuals aged 18-24 with education levels at or below high school as indicative of the low-education youth group.
+
+  Based on the arguments presented, choosing these specific socioeconomic indicators as independent variables to study the graffiti phenomenon and its spatial distribution patterns in San Francisco is well-founded both theoretically and empirically. Such research can assist policymakers in better understanding the social underpinnings of graffiti occurrence and in designing targeted interventions (Harcourt & Ludwig, 2006).
+
+```{r}
+library(tidyverse)
+library(tmap)
+library(rgdal)
+library(broom)
+library(mapview)
+library(crosstalk)
+library(sf)
+library(sp)
+library(spdep)
+library(car)
+library(fs)
+library(janitor)
+library(dplyr)
+library(RColorBrewer)
+library(spgwr)
+library(units)
+```
+
+```{r}
+# read shp and csv, set the crs to local 7131
+shape <- st_read("data_practice_exam/Census 2020_ Tracts for San Francisco/geo_export_43a0fd82-2b07-4029-bbcc-5e268a7596ce.shp") %>%
+  st_transform(., crs=7131) %>%
+  filter(geoid != '06075980401')
+
+graffiti <- read_csv("data_practice_exam/Graffiti.csv")
+```
+
+```{r}
+# split the long and lat of graffiti points, and remove 0 values. 
+# set their crs to 7131
+graffiti2 <- graffiti %>%
+  separate(., Point, c("latitude", "longitude"), sep=",")
+
+graffiti2$latitude <- parse_number(graffiti2$latitude)
+graffiti2$longitude <- parse_number(graffiti2$longitude)
+
+# remove the 0 values of long and lat, and set crs to 4326
+graffiti3 <- graffiti2 %>%
+  filter(latitude != 0) %>%
+  filter(longitude != 0)%>%
+  st_as_sf(., coords=c("longitude", "latitude"),
+                   crs=4326)
+
+# select graffiti points of 2017-2019, set crs to 7131
+graffiti4 <- graffiti3 %>%
+  filter(str_detect(Closed, "2017|2018|2019|2020|2021"))%>%
+  st_transform(., crs=7131)
+```
+
+```{r}
+# spatial subset points within the san fran polygon (sf object)
+graffiti_within <- graffiti4[shape, ,op=st_intersects]
+
+tmap_mode("plot")
+tm_shape(shape) +
+  tm_polygons(col=NA, alpha=0.5) +
+tm_shape(graffiti4)+
+  tm_dots(col="blue")
+```
+
+```{r}
+# count the points in each ward, and calculate density of the points.
+points_sf_joined <- shape %>%
+  mutate(n=lengths(st_intersects(., graffiti4))) %>%
+  janitor::clean_names()%>%
+   mutate(area=st_area(.))%>%
+   mutate(density=n/area)
+```
+
+```{r}
+# get the proportion of population aged 15-24, revise the tract ID
+census_age <- read_csv("data_practice_exam/age proportion/ACSST5Y2022.S0101-Data.csv",skip=1, na=c("NA","n/a")) %>%
+  clean_names()
+
+census_age_1 <- census_age %>%
+  mutate(proportion_15_24_aged = 100*(estimate_total_total_population_age_15_to_19_years +  estimate_total_total_population_age_20_to_24_years)/estimate_total_total_population) %>%
+  select(geography, proportion_15_24_aged) %>%
+  mutate(tract = str_sub(geography, start=10, end=20))
+
+
+# get the proportion of population 18-24 aged people's eaducation is less than high school (included). In other word, the population that failed to get college eduaction.
+census_education <- read_csv("data_practice_exam/18-24 educational situation/ACSST5Y2022.S1501-Data.csv",skip=1, na=c("NA","n/a")) %>%
+  clean_names()
+
+census_education_1 <- census_education %>%
+  mutate(proportion_18_to_24_high_school = 100*(estimate_total_age_by_educational_attainment_population_18_to_24_years_less_than_high_school_graduate +  estimate_total_age_by_educational_attainment_population_18_to_24_years_high_school_graduate_includes_equivalency)/estimate_total_age_by_educational_attainment_population_18_to_24_years) %>%
+  select(geography, proportion_18_to_24_high_school) %>%
+  mutate(tract = str_sub(geography, start=10, end=20))
+
+# get the proportion of household income below 25000.
+census_income <- read_csv("data_practice_exam/household_income/ACSST5Y2022.S1901-Data.csv",skip=1, na=c("NA","n/a")) %>%
+  clean_names() %>%
+  mutate(across(c(estimate_households_total_less_than_10_000,  estimate_households_total_10_000_to_14_999, estimate_households_total_15_000_to_24_999), as.numeric))
+
+census_income_1 <- census_income %>%
+  mutate(proportion_income_below_25000 = estimate_households_total_less_than_10_000 +  estimate_households_total_10_000_to_14_999 + estimate_households_total_15_000_to_24_999) %>%
+  select(geography, proportion_income_below_25000) %>%
+  mutate(tract = str_sub(geography, start=10, end=20))
+```
+
+```{r}
+# join census data "15-24 aged proportion" to shp, and replace NaN with 0
+points_sf_joined_age_proportion <- points_sf_joined %>%
+  left_join(., census_age_1, by=c("geoid"="tract")) %>%
+  mutate(proportion_15_24_aged = replace(proportion_15_24_aged, is.nan(proportion_15_24_aged),0))
+
+# join census data "proportion of household income less than 25000" to shp, and replace NaN with 0
+points_sf_joined_household_income <- points_sf_joined %>%
+  left_join(., census_income_1, by=c("geoid"="tract")) %>%
+  mutate(proportion_income_below_25000 = replace(proportion_income_below_25000, is.nan(proportion_income_below_25000),0)) %>%
+  mutate(proportion_income_below_25000 = replace(proportion_income_below_25000, is.na(proportion_income_below_25000),0))
+
+# join census data "18-24 aged eduacation less than high school (include)" to shp, and replace NaN with 0
+points_sf_joined_education <- points_sf_joined %>%
+  left_join(., census_education_1, by=c("geoid"="tract"))%>%
+  mutate(proportion_18_to_24_high_school = replace(proportion_18_to_24_high_school, is.nan(proportion_18_to_24_high_school),0))
+```
+
+```{r}
+# Now we are going to calculate Moran's I for graffiti points and three socioeconomic factors. We use it to present their spatial patterns, if they have cluser or dispersed pattern.
+#First we need to define a spatial weights matrix
+#Cauculate the centroids of all tracts
+coordsW <- points_sf_joined %>%
+  st_centroid() %>%
+  st_geometry()
+# plot(coordsW,axe=TRUE), have a look at the plot
+
+# Create a neighbours list
+LWard_nb <- points_sf_joined %>%
+  poly2nb(., queen=T)
+# summary(LWard_nb), the average number of links are 6.255
+# Plot the neibours
+# plot(LWard_nb, st_geometry(coordsW),col="red")
+# plot(points_sf_joined$geometry, add=T)
+
+# creat a spatial weights matrix from these weights
+# Moran's I requires a spatial weight list type object
+Lward.lw <- LWard_nb %>%
+  nb2listw(., style="C")
+
+# calculate Moran's I of the graffiti points density
+I_LWard_Global_Density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  moran.test(., Lward.lw)
+I_LWard_Global_Density
+
+# calculate Moran's I of the "15-24 aged proportion"
+I_LWard_Global_Age_proportion <- points_sf_joined_age_proportion %>%
+  pull(proportion_15_24_aged) %>%
+  as.vector()%>%
+  moran.test(., Lward.lw)
+I_LWard_Global_Age_proportion 
+
+# calculate Moran's I of the "proportion of household income less than 25000"
+I_LWard_Global_Household_income <- points_sf_joined_household_income %>%
+  pull(proportion_income_below_25000) %>%
+  as.vector()%>%
+  moran.test(., Lward.lw)
+I_LWard_Global_Household_income
+
+# calculate Moran's I of the "18-24 aged eduacation less than high school (include)"
+I_LWard_Global_Education <- points_sf_joined_education %>%
+  pull(proportion_18_to_24_high_school) %>%
+  as.vector()%>%
+  moran.test(., Lward.lw)
+I_LWard_Global_Education
+```
+# Analysis of Global Moran's I
+  1. The number of graffiti incidents per tract:
+Moran I = 0.509939976: This higher Moran I value indicates a significant positive spatial autocorrelation in the number of graffiti incidents, suggesting that similar counts of graffiti tend to be geographically clustered.
+p-value < 2.2e-16: This extremely low p-value implies that the observed spatial autocorrelation is highly statistically significant.
+
+  2. The proportion of the population aged 15-24 per tract:
+Moran I = 0.060412196: This relatively lower Moran I value suggests a weaker, yet still positive, spatial autocorrelation for the proportion of the population aged 15-24.
+p-value = 0.02139: This p-value denotes statistical significance for the spatial autocorrelation of this variable, although the strength is not high.
+
+  3.The proportion of households with incomes less than $25,000 per tract:
+Moran I = 0.410179155: This moderately high Moran I value indicates a strong positive spatial autocorrelation for lower household incomes.
+p-value < 2.2e-16: The extremely low p-value again signifies a high degree of statistical significance for this spatial autocorrelation.
+
+  4.The proportion of the population aged 18-24 with an education level of high school or lower per tract:
+Moran I = 0.123934998: This Moran I value is identical to that of the household income result, indicating a similarly strong positive spatial autocorrelation for lower levels of educational attainment.
+p-value = 0.0001615: This extremely low p-value suggests a highly statistically significant spatial autocorrelation.
+
+  In summary, all four variables exhibit a certain degree of spatial clustering. Notably, the number of graffiti incidents, the proportion of low-income households, and the percentage of the population with lower educational levels demonstrate more significant spatial clustering. We have reason to believe that their clustering is not coincidental. From the perspective of social spatial dialectics (Soja, 1980), it is probable that they are influenced by community environments, local policies, and housing prices, among other social factors. We will next illustrate their geographic clustering tendencies through the use of local Moran's I statistics.
+
+```{r}
+# Local Morans'I
+# generate I of four variables for each ward
+I_LWard_Local_density <- points_sf_joined %>%
+  pull(density) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw) %>%
+  as_tibble()
+
+I_LWard_Local_Age_proportion <- points_sf_joined_age_proportion %>%
+  pull(proportion_15_24_aged) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw) %>%
+  as_tibble()
+  
+I_LWard_Local_Household_income <- points_sf_joined_household_income %>%
+  pull(proportion_income_below_25000) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw) %>%
+  as_tibble()
+
+I_LWard_Local_Education <- points_sf_joined_education %>%
+  pull(proportion_18_to_24_high_school) %>%
+  as.vector()%>%
+  localmoran(., Lward.lw) %>%
+  as_tibble()
+
+# Copy the columns of I score and z-score back into the sptial polygons dataframe
+points_sf_joined_Local <- points_sf_joined %>%
+  mutate(density_I = as.numeric(I_LWard_Local_density$Ii)) %>%
+  mutate(density_Iz = as.numeric(I_LWard_Local_density$Z.Ii)) %>%
+  mutate(Age_proportion_I = as.numeric(I_LWard_Local_Age_proportion$Ii)) %>%
+  mutate(Age_proportion_Iz = as.numeric(I_LWard_Local_Age_proportion$Z.Ii)) %>%
+  mutate(I_LWard_Local_Household_income_I = as.numeric(I_LWard_Local_Household_income$Ii)) %>%
+  mutate(I_LWard_Local_Household_income_Iz = as.numeric(I_LWard_Local_Household_income$Z.Ii)) %>%
+  mutate(I_LWard_Local_Education_I = as.numeric(I_LWard_Local_Education$Ii)) %>%
+  mutate(I_LWard_Local_Education_Iz = as.numeric(I_LWard_Local_Education$Z.Ii))
+
+# plot a map of the local Moran's I outputs
+#set breaks and color manually. 
+#the standard deviations between -1.65 and 1.65 represent  completely spatially random; when they >2.58 or <-2.58, means at the 99% level that autocorrelation is present.
+breaks1 <- c(-1000, -2.58, -1.96, -1.65, 1.65, 1.96, 2.58, 1000)
+MoranColours <- rev(brewer.pal(8,"RdGy"))
+
+# map the local Moran's I
+par(mfrow=c(2, 2))
+
+tm_shape(points_sf_joined_Local) +
+  tm_polygons("density_Iz",
+              style="fixed",
+              breaks=breaks1,
+              palette=MoranColours,
+              midpoint=NA,
+              title="Local Moran's I, graffiti density in SF")
+
+tm_shape(points_sf_joined_Local) +
+  tm_polygons("Age_proportion_Iz",
+              style="fixed",
+              breaks=breaks1,
+              palette=MoranColours,
+              midpoint=NA,
+              title="Local Moran's I, 15-24 aged proportion in SF")
+
+tm_shape(points_sf_joined_Local) +
+  tm_polygons("I_LWard_Local_Household_income_Iz",
+              style="fixed",
+              breaks=breaks1,
+              palette=MoranColours,
+              midpoint=NA,
+              title="Local Moran's I, proportion of low incom household in SF")
+
+tm_shape(points_sf_joined_Local) +
+  tm_polygons("I_LWard_Local_Education_Iz",
+              style="fixed",
+              breaks=breaks1,
+              palette=MoranColours,
+              midpoint=NA,
+              title="Local Moran's I, proportion of 18-24 low education in SF")
+
+```
+# Analysis of Local Moran's I
+  Comparing the four local Moran's I maps and observing their hot and cold spot distributions through Z-values can aid in analyzing whether they share common clusters and thus infer their correlations. The local Moran's I map for graffiti density shows hotspots in the central and northeastern regions, indicating a clustering tendency of high values in these areas. The local Moran's I map for the proportion of the 15-24 age group does not display prominent hotspots. Only in the southwest corner are there two clusters of high values, but these are accompanied by two clusters of low values, suggesting no significant clustering trend for this attribute. The map for the proportion of low income households reveals a hotspot cluster in the northeast, which exhibits a similar clustering trend to that of graffiti density. The map for the 18-24 aged low education displays two hotspot clusters in the north and southeast, with a smaller hotspot cluster tendency also in the north-eastern part.
+
+  Overall, the four local Moran's I maps do not reveal a consistent clustering pattern, which suggests that the spatial autocorrelation distribution may be relatively random. We will next employ geographically weighted regression to further explore the spatial relationships between graffiti density and variables such as income, age, and education level.
+
+```{r}
+# Build GWR model
+# find the bandwidth
+points_sf_joined_all <- points_sf_joined %>%
+  mutate(proportion_15_24_aged = points_sf_joined_age_proportion$proportion_15_24_aged) %>%
+  mutate(proportion_income_below_25000 = points_sf_joined_household_income$proportion_income_below_25000) %>%
+  mutate(proportion_18_to_24_high_school = points_sf_joined_education$proportion_18_to_24_high_school)
+  
+coordsW2 <- st_coordinates(coordsW)
+
+points_sf_joined_all_2 <- cbind(points_sf_joined_all, coordsW2)
+
+GWRbandwidth <- gwr.sel(density ~ proportion_15_24_aged + 
+                          proportion_income_below_25000 +
+                          proportion_18_to_24_high_school,
+                        data = points_sf_joined_all_2,
+                      coords=cbind(points_sf_joined_all_2$X, points_sf_joined_all_2$Y),                       method = "CV", adapt=T)
+
+# clear units of "density"
+points_sf_joined_all_2$density <- points_sf_joined_all_2$density %>%
+                                  set_units(., NULL)
+
+#run the gwr model
+gwr.model = gwr(n ~ proportion_15_24_aged + 
+                          proportion_income_below_25000 +
+                          proportion_18_to_24_high_school,
+                        data = points_sf_joined_all_2,
+                      coords=cbind(points_sf_joined_all_2$X, points_sf_joined_all_2$Y),
+                     adapt=GWRbandwidth,
+                     # matrix output
+                     hatmatrix=TRUE,
+                    # standard error
+                    se.fit=TRUE)
+gwr.model
+```
+```{r}
+# map the coefficients
+results <- as.data.frame(gwr.model$SDF)
+summary(gwr.model)
+
+points_sf_joined_all_2 <- points_sf_joined_all %>%
+  mutate(coef_15_24_aged = results$proportion_15_24_aged,
+         coef_income_below_25000 = results$proportion_income_below_25000,
+         coef_18_24_education = results$proportion_18_to_24_high_school)
+
+par(mfrow=c(2, 2))
+
+tm_shape(points_sf_joined_all_2) +
+  tm_polygons(col = "coef_15_24_aged",
+              palette = MoranColours,
+              alpha = 0.5)
+
+tm_shape(points_sf_joined_all_2) +
+  tm_polygons(col = "coef_income_below_25000",
+              palette = MoranColours,
+              alpha = 0.5)
+
+tm_shape(points_sf_joined_all_2) +
+  tm_polygons(col = "coef_18_24_education",
+              palette = MoranColours,
+              alpha = 0.5)
+```
+
+#Analysis of GWR
+  The geographically weighted regression (GWR) model has been successfully fitted, using the count of graffiti incidents within each tract as the dependent variable and three socioeconomic factors as the independent variables. Further analysis will now be conducted.
+
+  The goodness-of-fit statistic, R^2, is 0.677243, which indicates that the model accounts for approximately 67.72% of the variability. This relatively high R^2 value suggests that the overall fit of the model is satisfactory.
+
+  Global estimates indicate that, when aggregating all data, the coefficients for all independent variables tend to be negative. However, at the local level, this effect may vary significantly.
+
+  In the GWR analysis, the coefficient distribution maps output by the model reveal spatial heterogeneity within the 243 administrative regions of San Francisco, that is, the patterns of variation in model coefficients with geography. This analysis shows that for graffiti counts, certain indicators exhibit varying degrees of correlation strength in different regions, with particularly notable positive effects in core urban areas.
+
+  Specifically, the proportion of the population aged 15 to 24 as an independent variable shows the most significant positive correlation with the frequency of graffiti incidents, followed by the proportion of low-income families, while the correlation with the proportion of the population aged 18 to 24 with lower education levels is relatively weaker.
+
+  Further spatial analysis indicates that positive correlations are predominantly concentrated in urban central areas. This pattern may be due to the unique   socio-economic attributes of urban centers and high population density, which not only increase the visibility and potential audience for graffiti but also provide more opportunities for expressing discontent and personal viewpoints. Additionally, the high enterprise density and the presence of social issues, such as higher unemployment rates and community instability, may further promote the occurrence of graffiti.
+
+  Moreover, young individuals tend to engage in graffiti activities in densely populated central areas to gain more social attention, thereby effectively reducing the incidence of graffiti in other communities. Considering San Francisco's relatively compact spatial range and developed transportation network, residents of peripheral communities can easily access the city center, which may encourage them to preferentially conduct graffiti in these central urban areas. Consequently, these factors collectively lead to a concentration of graffiti incidents in city center areas, causing significant spatial variability in the related coefficients.
+  
+# Discussion
+  The occurrence of graffiti is related to youth crime. To a certain extent, effectively curbing poverty and improving the education level of young people can reduce idle youth and thus lower the crime rate of this group (including graffiti behavior). This may require society to invest more resources in employment and education. The occurrence of malicious graffiti is often an outlet for dissatisfaction with society and politics, so theoretically any attempt to promote social equity may reduce the occurrence of graffiti. Additionally, the Broken Windows theory (James Q. Wilson & George L.K., 1982) reveals that if minor crimes in a community (such as graffiti) are ignored, it may lead to more serious criminal behaviors. Therefore, the social equity issues in areas of high graffiti incidence (central urban areas) should be addressed. Officials and entrepreneurs can reduce crime rates by addressing the problem of graffiti, which is a high-return investment.
+
+  We suggest considering the following methods to promote social equity and reduce the incidence of graffiti by improving income and education levels:
+  1. Government-led employment programs: The government can implement employment guidance and training programs for young people, especially for those with low income and low education levels. These programs can include career counseling, skill training, and internship opportunities.
+  2. Tax incentives and subsidies: Provide tax relief and subsidies for low-income families to alleviate economic pressure and encourage them to invest in education and personal development.
+  3. Providing high-quality, affordable housing: Offer affordable housing through policy support and private enterprise collaboration models, reducing the economic burden on families and improving living conditions.
+  4. Lifelong learning and adult education: Provide lifelong learning and adult education programs to encourage young people and adults to continue to improve their education level and skills.
+  5. Vocational education and training: Carry out vocational education projects in cooperation with local businesses to ensure that education meets the needs of the job market.
+
+
+# Renference
+Department of Public Works, San Francisco. (2019). Graffiti and Vandalism.
+City and County of San Francisco. (2021). Graffiti Statistics. San Francisco Public Works.
+
+MacDonald, J. M. (2001). The graffiti subculture: Youth, masculinity and identity in London and New York. Palgrave.
+
+Snyder, G. J. (2009). Graffiti Lives: Beyond the Tag in New York's Urban Underground. New York University Press.
+
+Weisel, D. L. (2002). Graffiti 'Hot Spots': The Center for Problem-Oriented Policing.
+Leventhal, T., & Brooks-Gunn, J. (2000). The neighborhoods they live in: the effects of neighborhood residence on child and adolescent outcomes. Psychological Bulletin, 126(2), 309.
+
+Cohen, A. K. (1955). Delinquent Boys: The Culture of the Gang. The Free Press.
+
+Lochner, L. (2004). Education, work, and crime: A human capital approach. International Economic Review, 45(3), 811-843.
+
+Machin, S., Marie, O., & Vujić, S. (2011). The crime reducing effect of education. The Economic Journal, 121(552), 463-484.
+
+Sampson, R. J., & Laub, J. H. (1993). Crime in the making: Pathways and turning points through life. Harvard University Press.
+
+Harcourt, B. E., & Ludwig, J. (2006). Broken Windows: New evidence from New York City and a five-city social experiment. The University of Chicago Law Review, 73(1), 271-320.
+
+Kelling, G. L., & Wilson, J. Q. (1982). Broken windows. Atlantic monthly, 249(3), 29-38.
+
