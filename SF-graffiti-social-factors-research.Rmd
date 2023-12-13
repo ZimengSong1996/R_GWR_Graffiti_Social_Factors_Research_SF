@@ -16,10 +16,15 @@ Do the socioeconomic factors influence the occurences of graffiti in San Francis
 # Data
 1. Resources:
 In this practical, we will use SF 2020 tracts shapefile data, census tract data of California, and the graffiti points data.
+
 SF 2020 tracts shapefile data can be found here:
 https://data.sfgov.org/Geographic-Locations-and-Boundaries/Census-2020-Tracts-for-San-Francisco/tmph-tgz9/about_data
-census tract data of California can be found here:
-https://data.census.gov/table?g=040XX00US06$1400000
+
+census tract data of California can be found here (2022 ACS 5 years):
+1.age population: https://data.census.gov/table/ACSST5Y2022.S0101?t=Age%20and%20Sex&g=040XX00US06$1400000
+2.household income: https://data.census.gov/table/ACSST5Y2022.S1901?t=Income%20(Households,%20Families,%20Individuals)&g=040XX00US06$1400000
+3. education: https://data.census.gov/table/ACSST5Y2022.S1501?t=Education&g=040XX00US06$1400000
+
 The graffiti points data can be found here:
 https://data.sfgov.org/City-Infrastructure/Graffiti/vg6y-3pcr
 
