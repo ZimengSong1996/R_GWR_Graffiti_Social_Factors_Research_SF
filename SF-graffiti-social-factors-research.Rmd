@@ -84,6 +84,7 @@ library(dplyr)
 library(RColorBrewer)
 library(spgwr)
 library(units)
+library(spatstat)
 ```
 
 ```{r}
@@ -126,6 +127,7 @@ tm_shape(shape) +
   tm_polygons(col=NA, alpha=0.5) +
 tm_shape(graffiti4)+
   tm_dots(col="blue")
+
 ```
 
 ```{r}
@@ -135,6 +137,15 @@ points_sf_joined <- shape %>%
   janitor::clean_names()%>%
    mutate(area=st_area(.))%>%
    mutate(density=n/area)
+
+# draw a KED
+coords_sf <- st_coordinates(points_sf_joined)
+my_window <- as.owin(shape)
+points_sf_joined.ppp <- ppp(x = coords_sf[,1], y = coords_sf[,2], window = my_window)
+
+points_sf_joined.ppp %>%
+  density(., sigma=400)%>%
+  plot()
 ```
 
 ```{r}
